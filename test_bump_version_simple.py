@@ -183,12 +183,13 @@ def main():
     WORKFLOW_TRIGGER_BRANCH = os.getenv('WORKFLOW_TRIGGER_BRANCH', 'master')
     SKIP_NIGHTLY_CHECK = os.getenv('SKIP_NIGHTLY_CHECK', 'true').lower() == 'true'
     DRY_RUN = os.getenv('DRY_RUN', 'false').lower() == 'true'
-
+    TEST_MODE = os.getenv('TEST_MODE', 'true').lower() == 'true'
+    CLEANUP_ON_SUCCESS = os.getenv('CLEANUP_ON_SUCCESS', 'true').lower() == 'true'
 
     print_step("=== Bump Version Workflow Test (Test Mode) ===", Colors.GREEN)
     print(f"Repository: {REPO}")
     print(f"Release Branch: {RELEASE_BRANCH}")
-    print(f"Test Branch: {TEST_BRANCH} (created by workflow)")
+    print(f"Test Branch: {TEST_BRANCH} (created by script)")
     print(f"Workflow Trigger Branch: {WORKFLOW_TRIGGER_BRANCH}")
     print(f"Test Mode: {TEST_MODE}")
     print(f"Dry Run: {DRY_RUN}")
