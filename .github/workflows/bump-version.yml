@@ -18,6 +18,11 @@ on:
         required: false
         type: boolean
         default: false
+      test_mode:
+        description: 'Test mode (create test branch with -test suffix)'
+        required: false
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       version:
@@ -48,23 +53,31 @@ jobs:
     outputs:
       release_branch: ${{ steps.derive-branch.outputs.release_branch }}
     steps:
-      - name: Validate version format and get target branch
+      - name: Validate version format and derive release branch
         id: derive-branch
         env:
           VERSION: ${{ inputs.version }}
-          TRIGGERED_BRANCH: ${{ github.ref_name }}
+          TEST_MODE: ${{ inputs.test_mode }}
         run: |
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::Invalid version format: $VERSION. Expected format: MAJOR.MINOR.PATCH"
             exit 1
           fi
           echo "Version format validated: $VERSION"
+          RELEASE_BRANCH=$(echo "$VERSION" | cut -d. -f1,2)
+          echo "Derived release branch: $RELEASE_BRANCH"
 
-          # Use the branch that triggered the workflow (supports test branches)
-          echo "Triggered from branch: $TRIGGERED_BRANCH"
-          echo "release_branch=$TRIGGERED_BRANCH" >> $GITHUB_OUTPUT
+          # In test mode, append -test suffix to branch name
+          if [[ "$TEST_MODE" == "true" ]]; then
+            TARGET_BRANCH="${RELEASE_BRANCH}-test"
+            echo "Test mode enabled: using branch $TARGET_BRANCH"
+          else
+            TARGET_BRANCH="$RELEASE_BRANCH"
+          fi
+
+          echo "release_branch=$TARGET_BRANCH" >> $GITHUB_OUTPUT
       - name: Check nightly build status on release branch
-        if: ${{ !inputs.skip_nightly_check && !contains(github.ref_name, '-test') }}
+        if: ${{ !inputs.skip_nightly_check && !inputs.test_mode }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BRANCH: ${{ steps.derive-branch.outputs.release_branch }}
@@ -99,6 +112,36 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Create test branch if in test mode
+        if: ${{ inputs.test_mode }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+          TARGET_BRANCH: ${{ needs.validate-and-check.outputs.release_branch }}
+        run: |
+          # Derive the actual release branch from version
+          RELEASE_BRANCH=$(echo "$VERSION" | cut -d. -f1,2)
+
+          echo "Test mode: Creating/updating branch $TARGET_BRANCH from $RELEASE_BRANCH"
+
+          # Check if test branch exists
+          if gh api repos/${{ github.repository }}/git/refs/heads/$TARGET_BRANCH 2>/dev/null; then
+            echo "Test branch $TARGET_BRANCH already exists, deleting it..."
+            gh api repos/${{ github.repository }}/git/refs/heads/$TARGET_BRANCH -X DELETE
+          fi
+
+          # Get SHA of release branch
+          RELEASE_SHA=$(gh api repos/${{ github.repository }}/git/refs/heads/$RELEASE_BRANCH --jq '.object.sha')
+          echo "Release branch $RELEASE_BRANCH SHA: $RELEASE_SHA"
+
+          # Create test branch from release branch
+          gh api repos/${{ github.repository }}/git/refs \
+            -X POST \
+            -f ref="refs/heads/$TARGET_BRANCH" \
+            -f sha="$RELEASE_SHA"
+
+          echo "Created test branch $TARGET_BRANCH from $RELEASE_BRANCH"
+
       - name: Checkout release branch
         uses: actions/checkout@v4
         with:
