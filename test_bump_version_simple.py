@@ -93,6 +93,41 @@ def delete_branch(repo: str, branch: str):
     ])
 
 
+def branch_exists(repo: str, branch: str) -> bool:
+    """Check if branch exists on repo"""
+    returncode, _, _ = run_gh_command([
+        'api', f'repos/{repo}/branches/{branch}'
+    ])
+    return returncode == 0
+
+
+def create_branch_from_ref(repo: str, new_branch: str, source_ref: str):
+    """Create a new branch from a source ref (branch or commit)"""
+    # Get the SHA of the source ref
+    returncode, stdout, stderr = run_gh_command([
+        'api', f'repos/{repo}/git/ref/heads/{source_ref}',
+        '--jq', '.object.sha'
+    ])
+
+    if returncode != 0:
+        print_error(f"Failed to get SHA for {source_ref}: {stderr}")
+        sys.exit(1)
+
+    source_sha = stdout.strip()
+
+    # Create new branch
+    returncode, _, stderr = run_gh_command([
+        'api', f'repos/{repo}/git/refs',
+        '-X', 'POST',
+        '-f', f'ref=refs/heads/{new_branch}',
+        '-f', f'sha={source_sha}'
+    ])
+
+    if returncode != 0:
+        print_error(f"Failed to create branch {new_branch}: {stderr}")
+        sys.exit(1)
+
+
 def trigger_workflow(repo: str, workflow_file: str, branch: str,
                      version: str, skip_nightly: bool, dry_run: bool, test_mode: bool):
     returncode, _, stderr = run_gh_command([
@@ -181,8 +216,22 @@ def main():
     next_tag = f"v{next_version}"
     print_success(f"Next version: {next_version}")
 
-    # Step 3: Delete existing tag if it exists
-    print_step(f"Step 3: Checking if tag {next_tag} exists...")
+    # Step 3: Create/recreate test branch if in test mode
+    if TEST_MODE:
+        print_step(f"Step 3: Creating test branch {TEST_BRANCH} from {RELEASE_BRANCH}...")
+        if branch_exists(REPO, TEST_BRANCH):
+            print(f"Test branch {TEST_BRANCH} already exists, deleting it...")
+            delete_branch(REPO, TEST_BRANCH)
+            time.sleep(2)
+            print_success(f"Deleted existing test branch {TEST_BRANCH}")
+
+        create_branch_from_ref(REPO, TEST_BRANCH, RELEASE_BRANCH)
+        print_success(f"Created test branch {TEST_BRANCH} from {RELEASE_BRANCH}")
+    else:
+        print_step("Step 3: Skipped (not in test mode)", Colors.YELLOW)
+
+    # Step 4: Delete existing tag if it exists
+    print_step(f"Step 4: Checking if tag {next_tag} exists...")
     if tag_exists(REPO, next_tag):
         print(f"Tag {next_tag} already exists, deleting it...")
         delete_tag(REPO, next_tag)
@@ -191,20 +240,20 @@ def main():
     else:
         print_success(f"Tag {next_tag} does not exist")
 
-    # Step 4: Trigger workflow from master branch
-    print_step(f"Step 4: Triggering bump-version workflow from {WORKFLOW_TRIGGER_BRANCH}...")
+    # Step 5: Trigger workflow from master branch
+    print_step(f"Step 5: Triggering bump-version workflow from {WORKFLOW_TRIGGER_BRANCH}...")
     print(f"  Version: {next_version}")
     print(f"  Test Mode: {TEST_MODE}")
     print(f"  Skip nightly check: {SKIP_NIGHTLY_CHECK}")
     print(f"  Dry run: {DRY_RUN}")
     if TEST_MODE:
-        print(f"  → Workflow will create/use test branch: {TEST_BRANCH}")
+        print(f"  → Workflow will use test branch: {TEST_BRANCH}")
     trigger_workflow(REPO, WORKFLOW_FILE, WORKFLOW_TRIGGER_BRANCH, next_version,
                     SKIP_NIGHTLY_CHECK, DRY_RUN, TEST_MODE)
     print_success("Workflow triggered")
 
-    # Step 5: Wait for workflow to start
-    print_step("Step 5: Waiting for workflow to start...")
+    # Step 6: Wait for workflow to start
+    print_step("Step 6: Waiting for workflow to start...")
     time.sleep(5)
     run_id = get_latest_workflow_run(REPO, WORKFLOW_FILE, WORKFLOW_TRIGGER_BRANCH)
     if not run_id:
@@ -213,14 +262,14 @@ def main():
     print_success(f"Workflow run ID: {run_id}")
     print(f"View at: https://github.com/{REPO}/actions/runs/{run_id}")
 
-    # Step 6: Wait for workflow to complete
-    print_step("Step 6: Waiting for workflow to complete...")
+    # Step 7: Wait for workflow to complete
+    print_step("Step 7: Waiting for workflow to complete...")
     wait_for_workflow(REPO, run_id)
     print_success("Workflow completed successfully")
 
-    # Step 7: Verify tag was created
+    # Step 8: Verify tag was created
     if not DRY_RUN:
-        print_step(f"Step 7: Verifying tag {next_tag} was created...")
+        print_step(f"Step 8: Verifying tag {next_tag} was created...")
         time.sleep(3)
         if tag_exists(REPO, next_tag):
             print_success(f"Tag {next_tag} exists")
@@ -228,16 +277,16 @@ def main():
             print_error(f"Tag {next_tag} was not created")
             sys.exit(1)
     else:
-        print_step("Step 7: Skipped (dry run mode)", Colors.YELLOW)
+        print_step("Step 8: Skipped (dry run mode)", Colors.YELLOW)
 
-    # Step 8: Cleanup (optional)
+    # Step 9: Cleanup (optional)
     if CLEANUP_ON_SUCCESS and not DRY_RUN and TEST_MODE:
-        print_step(f"Step 8: Cleaning up test branch and tag...")
+        print_step(f"Step 9: Cleaning up test branch and tag...")
         delete_tag(REPO, next_tag)
         delete_branch(REPO, TEST_BRANCH)
         print_success("Cleanup completed")
     else:
-        print_step("Step 8: Cleanup skipped", Colors.YELLOW)
+        print_step("Step 9: Cleanup skipped", Colors.YELLOW)
         if not DRY_RUN and TEST_MODE:
             print(f"To manually cleanup:")
             print(f"  gh api repos/{REPO}/git/refs/tags/{next_tag} -X DELETE")

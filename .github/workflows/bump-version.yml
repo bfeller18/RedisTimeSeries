@@ -112,37 +112,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Create test branch if in test mode
-        if: ${{ inputs.test_mode }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ inputs.version }}
-          TARGET_BRANCH: ${{ needs.validate-and-check.outputs.release_branch }}
-        run: |
-          # Derive the actual release branch from version
-          RELEASE_BRANCH=$(echo "$VERSION" | cut -d. -f1,2)
-
-          echo "Test mode: Creating/updating branch $TARGET_BRANCH from $RELEASE_BRANCH"
-
-          # Check if test branch exists
-          if gh api repos/${{ github.repository }}/git/refs/heads/$TARGET_BRANCH 2>/dev/null; then
-            echo "Test branch $TARGET_BRANCH already exists, deleting it..."
-            gh api repos/${{ github.repository }}/git/refs/heads/$TARGET_BRANCH -X DELETE
-          fi
-
-          # Get SHA of release branch
-          RELEASE_SHA=$(gh api repos/${{ github.repository }}/git/refs/heads/$RELEASE_BRANCH --jq '.object.sha')
-          echo "Release branch $RELEASE_BRANCH SHA: $RELEASE_SHA"
-
-          # Create test branch from release branch
-          gh api repos/${{ github.repository }}/git/refs \
-            -X POST \
-            -f ref="refs/heads/$TARGET_BRANCH" \
-            -f sha="$RELEASE_SHA"
-
-          echo "Created test branch $TARGET_BRANCH from $RELEASE_BRANCH"
-
-      - name: Checkout release branch
+      - name: Checkout target branch
         uses: actions/checkout@v4
         with:
           ref: ${{ needs.validate-and-check.outputs.release_branch }}
