@@ -18,6 +18,11 @@ on:
         required: false
         type: boolean
         default: false
+      test_mode:
+        description: 'Test mode (create test branch with -test suffix)'
+        required: false
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       version:
@@ -52,6 +57,7 @@ jobs:
         id: derive-branch
         env:
           VERSION: ${{ inputs.version }}
+          TEST_MODE: ${{ inputs.test_mode }}
         run: |
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::Invalid version format: $VERSION. Expected format: MAJOR.MINOR.PATCH"
@@ -60,9 +66,18 @@ jobs:
           echo "Version format validated: $VERSION"
           RELEASE_BRANCH=$(echo "$VERSION" | cut -d. -f1,2)
           echo "Derived release branch: $RELEASE_BRANCH"
-          echo "release_branch=$RELEASE_BRANCH" >> $GITHUB_OUTPUT
+
+          # In test mode, append -test suffix to branch name
+          if [[ "$TEST_MODE" == "true" ]]; then
+            TARGET_BRANCH="${RELEASE_BRANCH}-test"
+            echo "Test mode enabled: using branch $TARGET_BRANCH"
+          else
+            TARGET_BRANCH="$RELEASE_BRANCH"
+          fi
+
+          echo "release_branch=$TARGET_BRANCH" >> $GITHUB_OUTPUT
       - name: Check nightly build status on release branch
-        if: ${{ !inputs.skip_nightly_check }}
+        if: ${{ !inputs.skip_nightly_check && !inputs.test_mode }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BRANCH: ${{ steps.derive-branch.outputs.release_branch }}
@@ -97,7 +112,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Checkout release branch
+      - name: Checkout target branch
         uses: actions/checkout@v4
         with:
           ref: ${{ needs.validate-and-check.outputs.release_branch }}
