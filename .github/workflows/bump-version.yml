@@ -8,18 +8,8 @@ on:
         description: 'Version to set (format: MAJOR.MINOR.PATCH, e.g., 8.4.8)'
         required: true
         type: string
-      skip_nightly_check:
-        description: 'Skip nightly build status check'
-        required: false
-        type: boolean
-        default: false
       dry_run:
         description: 'Dry run (do not push changes)'
-        required: false
-        type: boolean
-        default: false
-      test_mode:
-        description: 'Test mode (create test branch with -test suffix)'
         required: false
         type: boolean
         default: false
@@ -29,11 +19,6 @@ on:
         description: 'Version to set (format: MAJOR.MINOR.PATCH, e.g., 8.4.8)'
         required: true
         type: string
-      skip_nightly_check:
-        description: 'Skip nightly build status check'
-        required: false
-        type: boolean
-        default: false
       dry_run:
         description: 'Dry run (do not push changes)'
         required: false
@@ -48,8 +33,6 @@ concurrency:
 jobs:
   validate-and-check:
     runs-on: ubuntu-latest
-    permissions:
-      actions: read
     outputs:
       release_branch: ${{ steps.derive-branch.outputs.release_branch }}
     steps:
@@ -57,7 +40,6 @@ jobs:
         id: derive-branch
         env:
           VERSION: ${{ inputs.version }}
-          TEST_MODE: ${{ inputs.test_mode }}
         run: |
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::Invalid version format: $VERSION. Expected format: MAJOR.MINOR.PATCH"
@@ -66,45 +48,7 @@ jobs:
           echo "Version format validated: $VERSION"
           RELEASE_BRANCH=$(echo "$VERSION" | cut -d. -f1,2)
           echo "Derived release branch: $RELEASE_BRANCH"
-
-          # In test mode, append -test suffix to branch name
-          if [[ "$TEST_MODE" == "true" ]]; then
-            TARGET_BRANCH="${RELEASE_BRANCH}-test"
-            echo "Test mode enabled: using branch $TARGET_BRANCH"
-          else
-            TARGET_BRANCH="$RELEASE_BRANCH"
-          fi
-
-          echo "release_branch=$TARGET_BRANCH" >> $GITHUB_OUTPUT
-      - name: Check nightly build status on release branch
-        if: ${{ !inputs.skip_nightly_check && !inputs.test_mode }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BRANCH: ${{ steps.derive-branch.outputs.release_branch }}
-        run: |
-          echo "Checking nightly build status for branch: $BRANCH"
-
-          WORKFLOW_RUNS=$(gh api \
-            -H "Accept: application/vnd.github+json" \
-            "/repos/${{ github.repository }}/actions/workflows/event-nightly.yml/runs?branch=$BRANCH&per_page=1" \
-            --jq '.workflow_runs[0]')
-
-          if [ -z "$WORKFLOW_RUNS" ] || [ "$WORKFLOW_RUNS" == "null" ]; then
-            echo "::warning::No nightly workflow runs found for branch $BRANCH"
-            exit 0
-          fi
-
-          STATUS=$(echo "$WORKFLOW_RUNS" | jq -r '.conclusion // "in_progress"')
-          RUN_URL=$(echo "$WORKFLOW_RUNS" | jq -r '.html_url')
-
-          echo "Latest nightly run: $RUN_URL"
-
-          if [ "$STATUS" != "success" ]; then
-            echo "::error::Latest nightly build did not succeed (status: $STATUS). Use 'skip_nightly_check' to override."
-            exit 1
-          fi
-
-          echo "Nightly build passed!"
+          echo "release_branch=$RELEASE_BRANCH" >> $GITHUB_OUTPUT
 
   bump-version:
     needs: validate-and-check
@@ -112,7 +56,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Checkout target branch
+      - name: Checkout release branch
         uses: actions/checkout@v4
         with:
           ref: ${{ needs.validate-and-check.outputs.release_branch }}
@@ -229,7 +173,6 @@ jobs:
           RELEASE_BRANCH: ${{ needs.validate-and-check.outputs.release_branch }}
           REF_NAME: ${{ github.ref_name }}
           DRY_RUN: ${{ inputs.dry_run }}
-          SKIP_NIGHTLY: ${{ inputs.skip_nightly_check }}
         run: |
           echo "## Set Version Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -237,4 +180,3 @@ jobs:
           echo "- **Release Branch**: $RELEASE_BRANCH" >> $GITHUB_STEP_SUMMARY
           echo "- **Triggered From**: $REF_NAME" >> $GITHUB_STEP_SUMMARY
           echo "- **Dry Run**: $DRY_RUN" >> $GITHUB_STEP_SUMMARY
-          echo "- **Nightly Check Skipped**: $SKIP_NIGHTLY" >> $GITHUB_STEP_SUMMARY
