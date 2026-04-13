@@ -11,6 +11,11 @@ on:
         required: false
         default: 'Testing deployment protection'
         type: string
+      triggered_by:
+        description: 'Platform-hub username who triggered this workflow'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   id-token: write   # Required for any potential AWS/cloud operations
