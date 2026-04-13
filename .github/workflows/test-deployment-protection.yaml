@@ -1,0 +1,105 @@
+name: Test Deployment Protection
+
+# This is a POC workflow to test Custom Deployment Protection Rules
+# It demonstrates how an external service can approve/reject deployments
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_message:
+        description: 'Test message to display'
+        required: false
+        default: 'Testing deployment protection'
+        type: string
+
+permissions:
+  id-token: write   # Required for any potential AWS/cloud operations
+  contents: read    # Required for actions/checkout
+  actions: write    # Required for workflow operations
+
+jobs:
+  setup:
+    name: Setup and Prepare
+    runs-on: ubuntu-latest
+    outputs:
+      message: ${{ steps.prepare.outputs.message }}
+      timestamp: ${{ steps.prepare.outputs.timestamp }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare test data
+        id: prepare
+        run: |
+          echo "message=${{ github.event.inputs.test_message }}" >> $GITHUB_OUTPUT
+          echo "timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
+          echo "✅ Setup complete"
+          echo "Triggered by: ${{ github.actor }}"
+          echo "Message: ${{ github.event.inputs.test_message }}"
+
+  test-deployment:
+    name: Test Deployment with Custom Protection
+    needs: setup
+    runs-on: ubuntu-latest
+    environment: poc-deployment-test  # This environment has custom protection rule enabled
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Display workflow information
+        run: |
+          echo "🚀 Deployment Test Workflow"
+          echo "================================"
+          echo "Triggered by: ${{ github.actor }}"
+          echo "Message: ${{ needs.setup.outputs.message }}"
+          echo "Timestamp: ${{ needs.setup.outputs.timestamp }}"
+          echo "Environment: poc-deployment-test"
+          echo "================================"
+
+      - name: Simulate deployment check
+        run: |
+          echo "Checking deployment prerequisites..."
+          sleep 2
+          echo "✅ Prerequisites met"
+
+      - name: Simulate deployment
+        run: |
+          echo "🎯 Starting deployment..."
+          echo "This step only runs if the custom protection rule approves"
+          sleep 3
+          echo "✅ Deployment successful!"
+
+      - name: Post-deployment validation
+        run: |
+          echo "Running post-deployment checks..."
+          sleep 2
+          echo "✅ Validation complete"
+
+  summary:
+    name: Summary
+    needs: [setup, test-deployment]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Workflow summary
+        run: |
+          echo "📊 Workflow Summary" >> $GITHUB_STEP_SUMMARY
+          echo "==================" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Triggered by**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Message**: ${{ needs.setup.outputs.message }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp**: ${{ needs.setup.outputs.timestamp }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Setup Status**: ${{ needs.setup.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployment Status**: ${{ needs.test-deployment.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ needs.test-deployment.result }}" == "success" ]]; then
+            echo "✅ **Custom protection rule approved the deployment**" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ needs.test-deployment.result }}" == "failure" ]]; then
+            echo "❌ **Deployment failed**" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ needs.test-deployment.result }}" == "cancelled" ]]; then
+            echo "🚫 **Custom protection rule rejected the deployment**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⏸️ **Deployment status**: ${{ needs.test-deployment.result }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
