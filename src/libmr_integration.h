@@ -18,6 +18,9 @@ typedef struct QueryPredicates_Arg
 {
     bool shouldReturnNull;
     size_t refCount;
+    /** Username from client (for other shards ACL).
+     * NULL or empty string means no explicit user when ACL context is applied. */
+    RedisModuleString *userName;
     QueryPredicateList *predicates;
     timestamp_t startTimestamp;
     timestamp_t endTimestamp;
@@ -116,6 +119,8 @@ void SeriesRecord_SendReply(RedisModuleCtx *rctx, void *record);
 Series *SeriesRecord_IntoSeries(SeriesRecord *record);
 
 int register_mr(RedisModuleCtx *ctx, long long numThreads);
+int LibMR_ResizeExecutionThreadPoolIfUnstarted(long long numThreads);
+bool LibMR_IsInitialized();
 bool IsMRCluster();
 
 #endif // REDIS_TIMESERIES_CLEAN_MR_INTEGRATION_H
