@@ -1,7 +1,8 @@
 name: Test Deployment Protection
 
-# This is a POC workflow to test Custom Deployment Protection Rules
-# It demonstrates how an external service can approve/reject deployments
+# POC workflow demonstrating two-path deployment authorization:
+# - Via platform-hub: workflow polls the platform-hub API to confirm the run is authorized
+# - Manually: GitHub native required reviewers on the environment gate the deployment
 
 on:
   workflow_dispatch:
@@ -16,11 +17,16 @@ on:
         required: false
         default: ''
         type: string
+      platform_hub_url:
+        description: 'Platform-hub base URL (e.g. http://localhost:8000)'
+        required: false
+        default: ''
+        type: string
 
 permissions:
-  id-token: write   # Required for any potential AWS/cloud operations
-  contents: read    # Required for actions/checkout
-  actions: write    # Required for workflow operations
+  id-token: write
+  contents: read
+  actions: write
 
 jobs:
   setup:
@@ -42,11 +48,43 @@ jobs:
           echo "Triggered by: ${{ github.actor }}"
           echo "Message: ${{ github.event.inputs.test_message }}"
 
-  test-deployment:
-    name: Test Deployment with Custom Protection
+  # --- Platform-hub path: polls the API until the run is confirmed authorized ---
+  check-authorization:
+    name: Wait for Platform-Hub Authorization
     needs: setup
     runs-on: ubuntu-latest
-    environment: poc-deployment-test  # This environment has custom protection rule enabled
+    if: ${{ github.event.inputs.triggered_by != '' }}
+    steps:
+      - name: Poll platform-hub until authorized
+        env:
+          PLATFORM_HUB_URL: ${{ github.event.inputs.platform_hub_url }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          echo "Polling $PLATFORM_HUB_URL for run_id=$RUN_ID ..."
+          for i in $(seq 1 30); do
+            RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+              "$PLATFORM_HUB_URL/runner/deployment-protection/is-authorized?run_id=$RUN_ID")
+            BODY=$(curl -s \
+              "$PLATFORM_HUB_URL/runner/deployment-protection/is-authorized?run_id=$RUN_ID")
+            echo "Attempt $i: HTTP $RESPONSE body=$BODY"
+            if [[ "$BODY" == "true" ]]; then
+              echo "✅ Run is authorized by platform-hub"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "❌ Timed out waiting for platform-hub authorization"
+          exit 1
+
+  # --- Deployment job ---
+  # When triggered by platform-hub: needs check-authorization (no environment gate needed)
+  # When triggered manually: uses the environment's required-reviewers gate, skips check-authorization
+  test-deployment:
+    name: Test Deployment
+    needs: [setup, check-authorization]
+    runs-on: ubuntu-latest
+    if: always() && needs.setup.result == 'success' && (needs.check-authorization.result == 'success' || needs.check-authorization.result == 'skipped')
+    environment: ${{ github.event.inputs.triggered_by == '' && 'poc-deployment-test' || '' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -56,9 +94,9 @@ jobs:
           echo "🚀 Deployment Test Workflow"
           echo "================================"
           echo "Triggered by: ${{ github.actor }}"
+          echo "Platform-hub user: ${{ github.event.inputs.triggered_by }}"
           echo "Message: ${{ needs.setup.outputs.message }}"
           echo "Timestamp: ${{ needs.setup.outputs.timestamp }}"
-          echo "Environment: poc-deployment-test"
           echo "================================"
 
       - name: Simulate deployment check
@@ -70,7 +108,6 @@ jobs:
       - name: Simulate deployment
         run: |
           echo "🎯 Starting deployment..."
-          echo "This step only runs if the custom protection rule approves"
           sleep 3
           echo "✅ Deployment successful!"
 
@@ -82,7 +119,7 @@ jobs:
 
   summary:
     name: Summary
-    needs: [setup, test-deployment]
+    needs: [setup, check-authorization, test-deployment]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -92,18 +129,19 @@ jobs:
           echo "==================" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Triggered by**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Platform-hub user**: ${{ github.event.inputs.triggered_by || '(manual)' }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Message**: ${{ needs.setup.outputs.message }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Timestamp**: ${{ needs.setup.outputs.timestamp }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Setup Status**: ${{ needs.setup.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Authorization Status**: ${{ needs.check-authorization.result }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Deployment Status**: ${{ needs.test-deployment.result }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          
+
           if [[ "${{ needs.test-deployment.result }}" == "success" ]]; then
-            echo "✅ **Custom protection rule approved the deployment**" >> $GITHUB_STEP_SUMMARY
+            echo "✅ **Deployment approved and completed**" >> $GITHUB_STEP_SUMMARY
           elif [[ "${{ needs.test-deployment.result }}" == "failure" ]]; then
             echo "❌ **Deployment failed**" >> $GITHUB_STEP_SUMMARY
           elif [[ "${{ needs.test-deployment.result }}" == "cancelled" ]]; then
-            echo "🚫 **Custom protection rule rejected the deployment**" >> $GITHUB_STEP_SUMMARY
+            echo "🚫 **Deployment was cancelled**" >> $GITHUB_STEP_SUMMARY
           else
             echo "⏸️ **Deployment status**: ${{ needs.test-deployment.result }}" >> $GITHUB_STEP_SUMMARY
           fi
